@@ -1,0 +1,15 @@
+# Les scripts shell doivent conserver des fins de ligne LF.
+#
+# Sous Windows, Git convertit par défaut en CRLF à l'extraction. Un .sh ainsi
+# converti échoue sur Linux dès la première ligne : le shebang devient
+# « #!/usr/bin/env bash\r », et bash répond « bad interpreter ». Le dépôt étant
+# édité sous Windows et déployé sous Debian, la règle est indispensable.
+*.sh text eol=lf
+
+# cmd.exe est moins tolérant : on lui garde des CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Les exécutables et la base ne doivent jamais être traités comme du texte.
+*.exe binary
+*.db binary

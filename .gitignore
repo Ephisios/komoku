@@ -1,0 +1,26 @@
+# Secrets : ne doivent jamais partir dans le dépôt
+.env
+*.env
+!.env.example
+server/deploy/komoku.env
+
+# Base de données et ses fichiers d'accompagnement SQLite
+server/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Configuration d'agent générée à l'installation (contient la clé API)
+agent/komoku.config.json
+
+# Installateurs produits par build-client.ps1.
+# La clé API y est embarquée : invisible à une recherche d'octets, parce
+# qu'IExpress compresse sa charge utile dans un CAB — mais une extraction
+# `Installer-Komoku.exe /T:<dossier> /C` la révèle en clair.
+dist/
+*.exe
+
+node_modules/
+npm-debug.log*
+.DS_Store
+Thumbs.db

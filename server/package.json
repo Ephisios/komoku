@@ -1,0 +1,16 @@
+{
+  "name": "komoku-server",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Serveur de collecte et tableau de bord du parc Komoku",
+  "main": "server.js",
+  "comment": "Aucune dépendance : le serveur n'utilise que les modules intégrés à Node, dont node:sqlite. Rien à compiler, rien à installer.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node scripts/seed.js",
+    "seed:clean": "node scripts/seed.js --clean"
+  }
+}

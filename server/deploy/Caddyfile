@@ -1,0 +1,29 @@
+# Caddy obtient et renouvelle le certificat HTTPS tout seul : c'est le chemin
+# le plus court vers un serveur joignable depuis l'extérieur, pour les postes
+# en télétravail.
+#
+#   sudo apt install caddy
+#   sudo cp server/deploy/Caddyfile /etc/caddy/Caddyfile   # puis édite le domaine
+#   sudo systemctl reload caddy
+#
+# Prérequis : un enregistrement DNS A (ou AAAA) qui pointe ce domaine vers le
+# VPS, et les ports 80 et 443 ouverts.
+
+komoku.monentreprise.fr {
+	reverse_proxy 127.0.0.1:8080
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/komoku.log
+		format json
+	}
+}

@@ -1,0 +1,51 @@
+# Installation sans Docker, directement sur le VPS :
+#
+#   sudo useradd --system --home /opt/komoku --shell /usr/sbin/nologin komoku
+#   sudo mkdir -p /opt/komoku /var/lib/komoku
+#   sudo cp -r server/* /opt/komoku/
+#   sudo cp server/.env.example /etc/komoku.env   # puis édite-le
+#   sudo chmod 600 /etc/komoku.env
+#   sudo chown -R komoku:komoku /opt/komoku /var/lib/komoku
+#   sudo cp server/deploy/komoku.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now komoku
+#
+# Node 24 ou plus est requis (le serveur utilise le module intégré node:sqlite).
+
+[Unit]
+Description=Komoku — collecte et tableau de bord du parc informatique
+Documentation=https://github.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=komoku
+Group=komoku
+WorkingDirectory=/opt/komoku
+EnvironmentFile=/etc/komoku.env
+Environment=DB_PATH=/var/lib/komoku/komoku.db
+Environment=HOST=127.0.0.1
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+
+# Le service ne lit et n'écrit que sa base.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/komoku
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=komoku
+
+[Install]
+WantedBy=multi-user.target

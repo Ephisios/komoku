@@ -1,0 +1,21 @@
+services:
+  komoku:
+    build: .
+    container_name: komoku
+    restart: unless-stopped
+    environment:
+      API_KEY: ${API_KEY:?API_KEY est obligatoire}
+      DASH_PASS: ${DASH_PASS:?DASH_PASS est obligatoire}
+      RETENTION_DAYS: ${RETENTION_DAYS:-30}
+      OFFLINE_AFTER_MINUTES: ${OFFLINE_AFTER_MINUTES:-12}
+      SESSION_DAYS: ${SESSION_DAYS:-14}
+      VPN_REQUIRED: ${VPN_REQUIRED:-false}
+    ports:
+      # Exposé seulement sur la boucle locale : c'est le reverse proxy
+      # (Caddy, nginx, Traefik) qui porte le HTTPS et publie le service.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - komoku-data:/data
+
+volumes:
+  komoku-data:
