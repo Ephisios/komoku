@@ -297,7 +297,8 @@ function isAuthenticated(req) {
 
 // -------------------------------------------------------------------- lecture
 
-function rowToMachine(row, { withPayload = true } = {}) {
+/** Lecture et évaluation d'une ligne : le socle commun aux trois réponses. */
+function lireRapport(row) {
   let payload = {};
   try {
     // Les rapports stockés par une version antérieure du serveur n'ont pas
@@ -309,8 +310,39 @@ function rowToMachine(row, { withPayload = true } = {}) {
   let forecast = null;
   try { if (row.forecast) forecast = JSON.parse(row.forecast); } catch { /* ignore */ }
 
-  const health = evaluateMachine(payload, row.last_seen, CONFIG, { forecast });
-  const base = {
+  return { payload, forecast, health: evaluateMachine(payload, row.last_seen, CONFIG, { forecast }) };
+}
+
+/** Rapport complet : servi uniquement par /api/machines/:id. */
+function rowToMachine(row) {
+  const { payload, health, forecast } = lireRapport(row);
+  return {
+    id: row.id, hostname: row.hostname, label: row.label,
+    firstSeen: row.first_seen, lastSeen: row.last_seen,
+    health, forecast, payload,
+  };
+}
+
+/**
+ * Résumé d'un poste : strictement ce que les vues de liste affichent.
+ *
+ * Le rapport complet pèse 3,5 Ko. Le renvoyer pour chaque poste toutes les
+ * vingt secondes représente 62 Mo par heure à cent postes, pour afficher sept
+ * chiffres par ligne. Le détail est servi à la demande par /api/machines/:id,
+ * et les données d'inventaire par /api/inventory.
+ */
+function rowToSummary(row) {
+  const { payload, health, forecast } = lireRapport(row);
+
+  const volumes = payload.disk?.volumes || [];
+  const principal = volumes.find((v) => /^C:/i.test(v.drive)) || volumes[0] || null;
+  const interfaces = payload.network?.interfaces || [];
+  const avecPasserelle = interfaces.find((i) => (i.gateway || []).length > 0) || interfaces[0];
+
+  // Le résumé conserve la FORME du rapport complet, simplement amputé : les
+  // vues de liste lisent les mêmes chemins, et le jour où un champ manque,
+  // il suffit de l'ajouter ici plutôt que de réécrire le tableau de bord.
+  return {
     id: row.id,
     hostname: row.hostname,
     label: row.label,
@@ -318,8 +350,56 @@ function rowToMachine(row, { withPayload = true } = {}) {
     lastSeen: row.last_seen,
     health,
     forecast,
+    ip: avecPasserelle?.ipv4?.[0] ?? null,
+    payload: {
+      system: {
+        model: payload.system?.model ?? null,
+        loggedUser: payload.system?.loggedUser ?? null,
+        uptimeSeconds: payload.system?.uptimeSeconds ?? null,
+      },
+      cpu: { name: payload.cpu?.name ?? null, loadPercent: payload.cpu?.loadPercent ?? null },
+      memory: {
+        usedPercent: payload.memory?.usedPercent ?? null,
+        usedBytes: payload.memory?.usedBytes ?? null,
+        totalBytes: payload.memory?.totalBytes ?? null,
+      },
+      disk: { volumes: principal ? [principal] : [], physical: [] },
+      vpn: { connected: Boolean(payload.vpn?.connected), name: payload.vpn?.name ?? null },
+      battery: payload.battery
+        ? { percent: payload.battery.percent ?? null, onAc: Boolean(payload.battery.onAc) }
+        : null,
+      rebootPending: payload.rebootPending ?? null,
+    },
   };
-  return withPayload ? { ...base, payload } : base;
+}
+
+/** Inventaire : matériel et système, qui ne bougent qu'exceptionnellement. */
+function rowToInventory(row) {
+  const { payload } = lireRapport(row);
+  return {
+    id: row.id,
+    hostname: row.hostname,
+    label: row.label,
+    system: payload.system ?? {},
+    cpu: {
+      name: payload.cpu?.name ?? null,
+      cores: payload.cpu?.cores ?? null,
+      threads: payload.cpu?.threads ?? null,
+    },
+    memory: {
+      totalBytes: payload.memory?.totalBytes ?? null,
+      installedBytes: payload.memory?.installedBytes ?? null,
+      modules: payload.memory?.modules ?? null,
+      speedMhz: payload.memory?.speedMhz ?? null,
+    },
+    disk: {
+      volumes: (payload.disk?.volumes || []).map((v) => ({ drive: v.drive, totalBytes: v.totalBytes })),
+      physical: payload.disk?.physical ?? [],
+    },
+    gpu: { adapters: (payload.gpu?.adapters || []).map((a) => ({ name: a.name })) },
+    lastUpdate: payload.security?.lastUpdate ?? null,
+    agentVersion: payload.agentVersion ?? null,
+  };
 }
 
 // ------------------------------------------------------------------- routage
@@ -491,12 +571,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (route === '/api/machines' && req.method === 'GET') {
-      const machines = q.allMachines.all().map((r) => rowToMachine(r));
+      const machines = q.allMachines.all().map((r) => rowToSummary(r));
       return send(res, 200, {
         now: Date.now(),
         offlineAfterMinutes: CONFIG.offlineAfterMinutes,
         machines,
       });
+    }
+
+    // Inventaire servi à part : la vue n'est ouverte qu'occasionnellement,
+    // et ces champs ne changent presque jamais.
+    if (route === '/api/inventory' && req.method === 'GET') {
+      return send(res, 200, { machines: q.allMachines.all().map((r) => rowToInventory(r)) });
     }
 
     const match = route.match(/^\/api\/machines\/([a-f0-9]{8,64})(\/history)?$/i);

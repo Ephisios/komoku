@@ -17,6 +17,8 @@ const state = {
   selected: null,
   historyHours: 24,
   historyCache: new Map(),
+  detailCache: new Map(),      // rapport complet, chargé à l'ouverture du volet
+  inventaire: null,            // { at, machines }, chargé à l'ouverture de la vue
 };
 
 const SERIES = [
@@ -95,10 +97,11 @@ function mainDisk(m) {
   return vols.find((v) => /^C:/i.test(v.drive)) || vols[0] || null;
 }
 
+// Le serveur a déjà choisi l'interface porteuse de la passerelle.
 function primaryIp(m) {
+  if (m.ip !== undefined) return m.ip;
   const ifaces = m.payload?.network?.interfaces || [];
-  const withGw = ifaces.find((i) => (i.gateway || []).length > 0);
-  const chosen = withGw || ifaces[0];
+  const chosen = ifaces.find((i) => (i.gateway || []).length > 0) || ifaces[0];
   return chosen?.ipv4?.[0] || null;
 }
 
@@ -162,7 +165,7 @@ function visibleMachines() {
     if (!q) return true;
     const hay = [
       m.hostname, m.label, m.payload?.system?.loggedUser, m.payload?.system?.model,
-      primaryIp(m), m.payload?.network?.publicIp, m.payload?.vpn?.name,
+      primaryIp(m), m.payload?.vpn?.name,
     ].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
   });
@@ -640,6 +643,54 @@ function syntheseInventaire(list) {
   return `<div class="facts" style="margin-bottom:12px">${puces.join('')}</div>`;
 }
 
+/**
+ * La vue inventaire croise deux sources : la liste (pour savoir quels postes
+ * sont visibles après recherche et filtre) et /api/inventory (pour le
+ * matériel). On rend un écran d'attente le temps du premier chargement.
+ */
+function renderInventaireOuChargement(list) {
+  const inv = state.inventaire?.machines;
+  if (!inv) {
+    chargerInventaire()
+      .then(() => render({ force: true }))
+      .catch(() => {
+        const main = $('#main');
+        if (main) main.innerHTML = '<div class="empty"><h2>Inventaire indisponible</h2></div>';
+      });
+    return '<div class="empty"><h2>Chargement de l’inventaire…</h2></div>';
+  }
+  // On ne garde que les postes visibles, dans l'ordre de l'inventaire.
+  const vus = new Set(list.map((m) => m.id));
+  return renderInventaire(inv.filter((m) => vus.has(m.id)));
+}
+
+async function chargerInventaire() {
+  // Ces champs ne changent qu'exceptionnellement : une minute de cache évite
+  // de recharger le parc entier à chaque bascule de vue.
+  if (state.inventaire && Date.now() - state.inventaire.at < 60000) return state.inventaire.machines;
+  const res = await fetch('api/inventory');
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  // Même forme que le rapport complet : les 20 définitions de colonnes
+  // restent inchangées.
+  const machines = data.machines.map((m) => ({
+    id: m.id,
+    hostname: m.hostname,
+    label: m.label,
+    payload: {
+      system: m.system,
+      cpu: m.cpu,
+      memory: m.memory,
+      disk: m.disk,
+      gpu: m.gpu,
+      security: { lastUpdate: m.lastUpdate },
+      agentVersion: m.agentVersion,
+    },
+  }));
+  state.inventaire = { at: Date.now(), machines };
+  return machines;
+}
+
 function renderInventaire(list) {
   if (!list.length) return renderEmpty();
 
@@ -743,7 +794,7 @@ function render({ force = false } = {}) {
 
   $('#main').innerHTML = state.view === 'topo' ? renderTopo(list)
     : state.view === 'cards' ? renderCards(list)
-      : state.view === 'inv' ? renderInventaire(list)
+      : state.view === 'inv' ? renderInventaireOuChargement(list)
         : renderTable(list);
 
   if (state.view === 'topo') drawTopology(list);
@@ -938,8 +989,8 @@ function kv(pairs) {
     `<dt>${esc(k)}</dt><dd${mono ? ' class="mono"' : ''}>${v}</dd>`).join('')}</dl>`;
 }
 
-function drawerContent(m) {
-  const p = m.payload || {};
+function drawerContent(m, detail) {
+  const p = detail || {};
   const sec = p.security || {};
   const parts = [];
 
@@ -1094,6 +1145,28 @@ function openDrawer(id) {
 /** Empreinte du rapport déjà affiché dans le volet : `machine:dernierContact`. */
 let drawerStamp = null;
 
+/**
+ * Rapport complet d'un poste.
+ *
+ * La liste ne transporte plus qu'un résumé : le détail est chargé à
+ * l'ouverture du volet, et rechargé seulement quand un nouveau rapport est
+ * arrivé — l'empreinte inclut lastSeen.
+ */
+async function chargerDetail(id, lastSeen) {
+  const cle = `${id}:${lastSeen}`;
+  const cached = state.detailCache.get(cle);
+  if (cached) return cached;
+
+  const res = await fetch(`api/machines/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+
+  // Un seul détail en mémoire : on ne garde pas le parc entier.
+  state.detailCache.clear();
+  state.detailCache.set(cle, data.payload);
+  return data.payload;
+}
+
 function refreshDrawer({ force = false } = {}) {
   const d = $('#drawer');
   if (!d) return;
@@ -1114,7 +1187,21 @@ function refreshDrawer({ force = false } = {}) {
 
   const body = $('#d-body');
   const scroll = body.scrollTop;
-  body.innerHTML = drawerContent(m);
+  const detail = state.detailCache.get(`${m.id}:${m.lastSeen}`);
+
+  if (!detail) {
+    body.innerHTML = '<p class="meter-sub" style="padding:28px 0;text-align:center">Chargement du détail…</p>';
+    chargerDetail(m.id, m.lastSeen)
+      .then(() => { if (state.selected === m.id) refreshDrawer({ force: true }); })
+      .catch(() => {
+        if (state.selected === m.id) {
+          body.innerHTML = '<p class="meter-sub" style="padding:28px 0;text-align:center">Détail indisponible.</p>';
+        }
+      });
+    return;
+  }
+
+  body.innerHTML = drawerContent(m, detail);
   body.scrollTop = scroll;
   loadChart();
 }
@@ -1183,8 +1270,8 @@ async function deleteMachine(id) {
   await fetchMachines();
 }
 
-function buildReport(m) {
-  const p = m.payload || {};
+function buildReport(m, detail) {
+  const p = detail || {};
   const disk = mainDisk(m);
   const lines = [
     `POSTE ${m.label || m.hostname}  (${m.hostname})`,
@@ -1218,7 +1305,7 @@ function buildReport(m) {
 async function copyReport(id, btn) {
   const m = state.machines.find((x) => x.id === id);
   if (!m) return;
-  const text = buildReport(m);
+  const text = buildReport(m, state.detailCache.get(`${m.id}:${m.lastSeen}`));
   try {
     await navigator.clipboard.writeText(text);
     const old = btn.innerHTML;
@@ -1295,7 +1382,10 @@ $('#tiles').addEventListener('click', (e) => {
 });
 
 $('#main').addEventListener('click', (e) => {
-  if (e.target.closest('#export-csv')) return exporterCsv(visibleMachines());
+  if (e.target.closest('#export-csv')) {
+    const vus = new Set(visibleMachines().map((m) => m.id));
+    return exporterCsv((state.inventaire?.machines || []).filter((m) => vus.has(m.id)));
+  }
 
   const thInv = e.target.closest('th[data-inv]');
   if (thInv) {
