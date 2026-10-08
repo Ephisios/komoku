@@ -27,7 +27,6 @@ const ARRAY_PATHS = [
   ['security', 'firewall'],
   ['security', 'bitlocker'],
   ['security', 'vpnProfiles'],
-  ['topProcesses'],
 ];
 
 function normalizePayload(payload) {

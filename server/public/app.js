@@ -1091,14 +1091,41 @@ function drawerContent(m, detail, changements) {
     ['Version de l\u2019agent', esc(p.agentVersion), true],
   ])));
 
-  const procs = p.topProcesses || [];
-  if (procs.length) {
-    const max = Math.max(...procs.map((x) => x.ramBytes || 0), 1);
-    parts.push(panel('Programmes les plus gourmands', `<div class="proc-list">${procs.map((pr) => `
-      <div class="proc">
-        <span>${esc(pr.name)}</span><span class="v">${fmtBytes(pr.ramBytes)}</span>
-        <span class="bar"><i style="width:${Math.round((pr.ramBytes / max) * 100)}%"></i></span>
-      </div>`).join('')}</div>`));
+  // Pression système : trois causes classiques de lenteur, diagnostiquées
+  // sans nommer un seul programme. On affiche l'interprétation, pas le
+  // chiffre brut : « 180 défauts/s » ne dit rien à personne.
+  const pr = p.pressure;
+  if (pr) {
+    const lectures = [];
+
+    if (pr.hardFaultsPerSec !== undefined) {
+      const v = pr.hardFaultsPerSec;
+      const sev = v > 300 ? 'critical' : v > 100 ? 'warning' : null;
+      lectures.push([sev, `${v} défauts de page durs/s`,
+        sev ? 'la machine manque de mémoire' : 'mémoire suffisante']);
+    }
+    if (pr.diskQueue !== undefined) {
+      const sev = pr.diskQueue > 4 ? 'critical' : pr.diskQueue > 2 ? 'warning' : null;
+      lectures.push([sev, `file disque ${pr.diskQueue}`,
+        sev ? 'le disque est le goulot' : 'disque fluide']);
+    }
+    if (pr.topSharePercent !== undefined) {
+      const sev = pr.topSharePercent > 60 ? 'warning' : null;
+      lectures.push([sev, `plus gros programme : ${fmtPct(pr.topSharePercent)} de la RAM`,
+        sev ? 'un seul programme domine' : 'charge répartie']);
+    }
+    if (pr.processCount !== undefined) {
+      lectures.push([null, `${pr.processCount} processus`, '']);
+    }
+
+    parts.push(panel('Pression système', `
+      <div class="facts">${lectures.map(([sev, texte]) =>
+        `<span class="fact"${sev ? ` data-sev="${sev}"` : ''}>${icon('cpu')}${esc(texte)}</span>`
+      ).join('')}</div>
+      <p class="meter-sub" style="margin-top:9px">${
+        esc(lectures.filter((l) => l[2]).map((l) => l[2]).join(' · '))
+      }</p>
+      <p class="meter-sub" style="margin-top:6px">Aucun nom de programme n’est collecté.</p>`));
   }
 
   return parts.join('');
@@ -1304,6 +1331,7 @@ function buildReport(m, detail) {
     `IP locale       ${primaryIp(m) || '—'}`,
     `IP publique     ${p.network?.publicIp || '—'}`,
     `VPN             ${p.vpn?.connected ? `connecté (${p.vpn.name})` : 'non connecté'}`,
+    `Pression        ${p.pressure ? `${p.pressure.hardFaultsPerSec} défauts/s · file disque ${p.pressure.diskQueue} · ${p.pressure.processCount} processus` : '—'}`,
     `Antivirus       ${(p.security?.antivirus || []).map((a) =>
       `${a.name} ${a.realTime ? 'actif' : 'INACTIF'}`).join(' | ') || '—'}`,
     `Redémarrage     ${p.rebootPending ? 'EN ATTENTE' : 'à jour'}`,

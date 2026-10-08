@@ -16,7 +16,8 @@ fenêtre.
 | **Réseau** | IP locale de chaque carte, IP publique, passerelle, DNS, SSID Wi-Fi |
 | **VPN** | connecté ou non, et avec quel client (WireGuard, OpenVPN, NordVPN, Fortinet, AnyConnect, Tailscale… 20 clients reconnus) |
 | **Sécurité** | antivirus actif ou non, signatures à jour, pare-feu, BitLocker, dernier correctif Windows, redémarrage en attente |
-| **Divers** | utilisateur connecté, durée depuis le dernier démarrage, batterie, santé SMART des disques, programmes les plus gourmands |
+| **Divers** | utilisateur connecté, durée depuis le dernier démarrage, batterie, santé SMART des disques |
+| **Pression** | défauts de page durs, file d'attente disque, part du plus gros programme, nombre de processus — **sans aucun nom de programme** |
 | **Changements** | mémoire, disques, processeur, numéro de série, version de Windows : ce qui a changé et quand |
 
 Le tableau de bord classe les postes tout seul : **Problème**, **Attention**,
@@ -39,8 +40,8 @@ accessible : rien n'y dépend de la couleur.
 
 Le choix est mémorisé dans le navigateur. Un clic n'importe où — ligne, nœud,
 vignette, ligne de tableau — ouvre le détail du poste : anomalies, courbes de
-charge sur 6 h / 24 h / 7 j, disques, réseau, sécurité, matériel, programmes
-les plus gourmands.
+charge sur 6 h / 24 h / 7 j, disques, réseau, sécurité, changements, matériel
+et pression système.
 
 ## Prévision et changements
 
@@ -274,10 +275,19 @@ coûterait 30 secondes au lieu de 4.
 
 Komoku relève l'état des machines, pas l'activité des personnes : pas de frappe
 clavier, pas de capture d'écran, pas d'historique de navigation, pas de liste
-des documents ouverts. Les deux données qui touchent à l'usage sont
-l'**identifiant de session Windows** et les **six programmes les plus
-gourmands** — tous deux désactivables (`collectProcesses` dans
-`C:\ProgramData\Komoku\komoku.config.json`).
+des documents ouverts, **pas de liste des logiciels installés**, et **aucun nom
+de programme en cours d'exécution**.
+
+Pour diagnostiquer un poste lent, l'agent relève des indicateurs de pression :
+défauts de page durs, file d'attente disque, part de mémoire du plus gros
+programme, nombre de processus. Ils répondent aux trois causes classiques de
+lenteur — mémoire insuffisante, disque saturé, programme qui s'emballe — sans
+jamais dire *lequel*. C'est un choix délibéré : savoir qu'un seul programme
+occupe 70 % de la mémoire suffit à agir, connaître son nom ne renseigne que sur
+ce que la personne est en train de faire.
+
+La seule donnée qui touche encore à l'usage est l'**identifiant de session
+Windows**, nécessaire pour savoir à qui appartient le poste.
 
 En France, un outil de supervision des postes doit être porté à la connaissance
 des salariés et inscrit au registre des traitements ; les représentants du

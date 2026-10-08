@@ -78,7 +78,6 @@ $config = [ordered]@{
     label            = $Label
     collectPublicIp  = (-not $NoPublicIp)
     collectGpuLoad   = (-not $NoGpuLoad)
-    collectProcesses = $true
     collectSecurity  = $true
     timeoutSeconds   = 20
 }

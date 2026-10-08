@@ -159,12 +159,13 @@ function buildPayload(p, at, metrics = {}) {
       lastUpdate: { id: 'KB5129195', date: '2026-09-20T22:00:00.000Z' },
       vpnProfiles: [],
     },
-    topProcesses: [
-      { name: 'chrome', ramBytes: 740 * MO, cpuTime: 1420.5 },
-      { name: 'OUTLOOK', ramBytes: 410 * MO, cpuTime: 302.1 },
-      { name: 'Teams', ramBytes: 388 * MO, cpuTime: 517.8 },
-      { name: 'explorer', ramBytes: 142 * MO, cpuTime: 88.4 },
-    ],
+    pressure: {
+      processCount: 180 + (index * 23) % 90,
+      topSharePercent: Math.round((over.ramUsed ?? 0.4) * 40 * 10) / 10,
+      hardFaultsPerSec: p.ram > 90 ? 240 : 0,
+      diskQueue: 0,
+      diskBusyPercent: 3,
+    },
     collectMs: 4200,
   };
 }

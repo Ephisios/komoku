@@ -92,7 +92,6 @@ function Get-Config {
         label            = ''
         collectPublicIp  = $true
         collectGpuLoad   = $true
-        collectProcesses = $true
         collectSecurity  = $true
         timeoutSeconds   = 20
     }
@@ -494,25 +493,52 @@ function Get-RebootPending {
     } catch { return $null }
 }
 
-function Get-TopProcesses {
-    param([int]$Count = 6)
+function Get-Pressure {
+    <#
+      Pression systeme : de quoi diagnostiquer « mon PC rame » sans jamais
+      nommer un programme.
+
+      La liste des processus les plus gourmands disait ce que la personne
+      avait ouvert a cet instant. Ces quatre indicateurs repondent aux trois
+      causes classiques de lenteur sans rien reveler de son activite :
+
+        - defauts de page durs   : il manque de la memoire
+        - file d'attente disque  : le disque est le goulot
+        - part du plus gros processus : un programme s'emballe, ou la charge
+          est diffuse. Son nom n'est pas necessaire pour le savoir.
+        - nombre de processus    : encombrement general
+    #>
+    $out = [ordered]@{}
+
     try {
-        $procs = Get-Process -ErrorAction SilentlyContinue |
-            Where-Object { $_.WorkingSet64 -gt 0 } |
-            Sort-Object WorkingSet64 -Descending |
-            Select-Object -First $Count
-        $out = @()
-        foreach ($p in $procs) {
-            $cpuTime = $null
-            if ($p.CPU) { $cpuTime = [math]::Round($p.CPU, 1) }
-            $out += [ordered]@{
-                name     = $p.ProcessName
-                ramBytes = [long]$p.WorkingSet64
-                cpuTime  = $cpuTime
+        $procs = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.WorkingSet64 -gt 0 })
+        $out.processCount = $procs.Count
+        if ($procs.Count -gt 0) {
+            $max = ($procs | Measure-Object -Property WorkingSet64 -Maximum).Maximum
+            $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+            if ($os -and $os.TotalVisibleMemorySize -gt 0) {
+                $total = [double]$os.TotalVisibleMemorySize * 1024
+                $out.topSharePercent = [math]::Round($max / $total * 100, 1)
             }
         }
-        return $out
-    } catch { return @() }
+    } catch {}
+
+    # Defauts de page DURS : les lectures qui vont reellement chercher sur le
+    # disque. Au-dela d'une centaine par seconde de facon soutenue, la machine
+    # manque de memoire, quel que soit le pourcentage d'occupation affiche.
+    try {
+        $m = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction Stop
+        $out.hardFaultsPerSec = [int]$m.PagesInputPerSec
+    } catch {}
+
+    try {
+        $d = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk `
+            -Filter "Name='_Total'" -ErrorAction Stop
+        $out.diskQueue = [int]$d.CurrentDiskQueueLength
+        $out.diskBusyPercent = [math]::Min([int]$d.PercentDiskTime, 100)
+    } catch {}
+
+    return $out
 }
 
 # ============================================== inventaire (cache 60 minutes)
@@ -824,7 +850,9 @@ $payload = [ordered]@{
 }
 
 if ($cfg.collectSecurity) { $payload.security = $inventory.data.security }
-if ($cfg.collectProcesses) { $payload.topProcesses = @(Get-TopProcesses) }
+# Collecte systematique : ces indicateurs sont anonymes, il n'y a rien a
+# arbitrer entre diagnostic et vie privee.
+$payload.pressure = Get-Pressure
 
 $payload.collectMs = [int]((Get-Date) - $started).TotalMilliseconds
 $json = $payload | ConvertTo-Json -Depth 8 -Compress
