@@ -13,6 +13,7 @@ const state = {
   filter: 'all',
   view: 'topo',
   sort: { key: 'hostname', dir: 1 },
+  sortInv: { key: 0, dir: 1 },
   selected: null,
   historyHours: 24,
   historyCache: new Map(),
@@ -541,6 +542,168 @@ function renderTable(list) {
     <thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+/* ========================================================= inventaire */
+
+/**
+ * Colonnes de l'inventaire.
+ *
+ * `get` renvoie la valeur canonique : elle sert au tri ET au CSV. `fmt` ne
+ * sert qu'à l'affichage. Séparer les deux évite le piège classique de
+ * l'export — un tableur qui reçoit « 16 Go » ne sait ni trier ni additionner,
+ * alors qu'il fait les deux avec 16.
+ */
+const INVENTAIRE = [
+  { titre: 'Poste', get: (m) => m.label || m.hostname },
+  { titre: 'Nom réseau', get: (m) => m.hostname, mono: true },
+  { titre: 'Utilisateur', get: (m) => (m.payload?.system?.loggedUser || '').split('\\').pop() },
+  { titre: 'Type', get: (m) => (m.payload?.system?.isLaptop ? 'Portable' : 'Fixe') },
+  { titre: 'Modèle', get: (m) => [m.payload?.system?.manufacturer, m.payload?.system?.model].filter(Boolean).join(' ') },
+  { titre: 'N° de série', get: (m) => m.payload?.system?.serial, mono: true },
+  { titre: 'Système', get: (m) => (m.payload?.system?.osName || '').replace(/^Microsoft /, '') },
+  { titre: 'Version', get: (m) => m.payload?.system?.osDisplayVersion },
+  { titre: 'Build', get: (m) => m.payload?.system?.osBuild, mono: true, num: true },
+  { titre: 'Processeur', get: (m) => m.payload?.cpu?.name },
+  { titre: 'Cœurs', get: (m) => m.payload?.cpu?.cores, num: true },
+  {
+    // La RAM se vend en gibioctets : 16 Go annoncés = 16 × 1024³. On part de
+    // la capacité INSTALLÉE, pas de la mémoire visible, que le matériel
+    // ampute de quelques centaines de Mo — une machine de 16 Go
+    // s'afficherait sinon à 15.
+    titre: 'RAM (Go)', num: true,
+    get: (m) => {
+      const o = m.payload?.memory?.installedBytes ?? m.payload?.memory?.totalBytes;
+      return o ? Math.round(o / 1024 ** 3) : null;
+    },
+    fmt: (v) => (v === null ? '—' : `${v} Go`),
+  },
+  { titre: 'Barrettes', get: (m) => m.payload?.memory?.modules, num: true },
+  {
+    // Les disques se vendent en gigaoctets DÉCIMAUX : un « 512 Go » fait
+    // 512 × 10⁹ octets, soit 476 gibioctets. L'inventaire doit afficher le
+    // chiffre inscrit sur la machine, et porte sur le disque physique — une
+    // partition C: est toujours plus petite que le support.
+    titre: 'Disque (Go)', num: true,
+    get: (m) => {
+      const phys = m.payload?.disk?.physical?.[0]?.sizeBytes;
+      if (phys) return Math.round(phys / 1e9);
+      const d = mainDisk(m);
+      return d?.totalBytes ? Math.round(d.totalBytes / 1e9) : null;
+    },
+    fmt: (v) => (v === null ? '—' : `${v} Go`),
+  },
+  { titre: 'Support', get: (m) => m.payload?.disk?.physical?.[0]?.mediaType },
+  { titre: 'Santé disque', get: (m) => m.payload?.disk?.physical?.[0]?.healthStatus },
+  { titre: 'Carte graphique', get: (m) => (m.payload?.gpu?.adapters || []).map((a) => a.name).join(' + ') },
+  {
+    titre: 'Windows installé le', get: (m) => isoJour(m.payload?.system?.installedOn),
+    fmt: (v) => (v ? v.split('-').reverse().join('/') : '—'),
+  },
+  {
+    titre: 'Dernier correctif', get: (m) => isoJour(m.payload?.security?.lastUpdate?.date),
+    fmt: (v) => (v ? v.split('-').reverse().join('/') : '—'),
+  },
+  { titre: 'Agent', get: (m) => m.payload?.agentVersion, mono: true },
+];
+
+/** Date ISO réduite au jour : triable comme du texte, lisible dans un tableur. */
+function isoJour(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+function syntheseInventaire(list) {
+  const portables = list.filter((m) => m.payload?.system?.isLaptop).length;
+  const petiteRam = list.filter((m) => {
+    const o = m.payload?.memory?.installedBytes ?? m.payload?.memory?.totalBytes;
+    return o && o / 1024 ** 3 < 8;
+  }).length;
+
+  const parVersion = new Map();
+  for (const m of list) {
+    const v = [m.payload?.system?.osName?.replace(/^Microsoft Windows /, 'Windows '),
+      m.payload?.system?.osDisplayVersion].filter(Boolean).join(' ') || 'inconnu';
+    parVersion.set(v, (parVersion.get(v) || 0) + 1);
+  }
+
+  const puces = [
+    `<span class="fact">${icon('laptop')}${list.length} poste${list.length > 1 ? 's' : ''}</span>`,
+    `<span class="fact">${icon('laptop')}${portables} portable${portables > 1 ? 's' : ''} · ${list.length - portables} fixe${list.length - portables > 1 ? 's' : ''}</span>`,
+  ];
+  if (petiteRam > 0) {
+    puces.push(`<span class="fact" data-sev="warning">${icon('ram')}${petiteRam} poste${
+      petiteRam > 1 ? 's' : ''} sous 8 Go</span>`);
+  }
+  for (const [v, n] of [...parVersion].sort((a, b) => b[1] - a[1])) {
+    puces.push(`<span class="fact">${icon('laptop')}${esc(v)} — ${n}</span>`);
+  }
+  return `<div class="facts" style="margin-bottom:12px">${puces.join('')}</div>`;
+}
+
+function renderInventaire(list) {
+  if (!list.length) return renderEmpty();
+
+  const { key, dir } = state.sortInv;
+  const col = INVENTAIRE[key] || INVENTAIRE[0];
+  const sorted = [...list].sort((a, b) => {
+    const va = col.get(a);
+    const vb = col.get(b);
+    if (va === vb) return 0;
+    if (va === null || va === undefined || va === '') return 1;
+    if (vb === null || vb === undefined || vb === '') return -1;
+    const cmp = col.num ? Number(va) - Number(vb) : String(va).localeCompare(String(vb), 'fr');
+    return cmp * dir;
+  });
+
+  const entete = INVENTAIRE.map((c, i) => {
+    const tri = i === key ? (dir === 1 ? 'ascending' : 'descending') : 'none';
+    return `<th aria-sort="${tri}" data-inv="${i}" scope="col">${esc(c.titre)}</th>`;
+  }).join('');
+
+  const corps = sorted.map((m) => `<tr data-id="${esc(m.id)}">${
+    INVENTAIRE.map((c) => {
+      const v = c.get(m);
+      const aff = c.fmt ? c.fmt(v) : (v === null || v === undefined || v === '' ? '—' : v);
+      const cls = [c.num ? 'num' : '', c.mono ? 'mono' : ''].filter(Boolean).join(' ');
+      return `<td${cls ? ` class="${cls}"` : ''}>${esc(aff)}</td>`;
+    }).join('')}</tr>`).join('');
+
+  return `
+    ${syntheseInventaire(list)}
+    <div class="controls" style="margin-bottom:10px">
+      <button class="btn" type="button" id="export-csv">${icon('copy')}Exporter en CSV</button>
+      <span class="meter-sub">${list.length} ligne${list.length > 1 ? 's' : ''} · séparateur point-virgule, lisible directement par Excel</span>
+    </div>
+    <div class="table-wrap"><table>
+      <caption class="sr-only">Inventaire du parc, triable par colonne</caption>
+      <thead><tr>${entete}</tr></thead><tbody>${corps}</tbody>
+    </table></div>`;
+}
+
+function exporterCsv(list) {
+  // Point-virgule et BOM : Excel en locale française attend le premier, et
+  // sans le second il lit l'UTF-8 comme du Latin-1 — « Modèle » devient
+  // « ModÃ¨le ». Deux détails qui décident si le fichier est utilisable.
+  const sep = ';';
+  const cellule = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[";\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lignes = [INVENTAIRE.map((c) => cellule(c.titre)).join(sep)];
+  for (const m of list) lignes.push(INVENTAIRE.map((c) => cellule(c.get(m))).join(sep));
+
+  const blob = new Blob([`﻿${lignes.join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `komoku-inventaire-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function renderEmpty() {
   if (state.machines.length === 0) {
     return `<div class="empty">
@@ -568,6 +731,7 @@ function render({ force = false } = {}) {
   // rafraîchis sur place par tickRelativeTimes, sans toucher au reste.
   const sig = [
     state.view, state.filter, state.query, state.sort.key, state.sort.dir,
+    state.sortInv.key, state.sortInv.dir,
     ...list.map((m) => `${m.id}|${m.health.status}|${m.lastSeen}`),
   ].join('~');
 
@@ -579,7 +743,8 @@ function render({ force = false } = {}) {
 
   $('#main').innerHTML = state.view === 'topo' ? renderTopo(list)
     : state.view === 'cards' ? renderCards(list)
-      : renderTable(list);
+      : state.view === 'inv' ? renderInventaire(list)
+        : renderTable(list);
 
   if (state.view === 'topo') drawTopology(list);
   if (state.selected) refreshDrawer();
@@ -1098,7 +1263,8 @@ $('#q').addEventListener('input', (e) => {
   render();
 });
 
-const VIEWS = [['view-topo', 'topo'], ['view-cards', 'cards'], ['view-table', 'table']];
+const VIEWS = [['view-topo', 'topo'], ['view-cards', 'cards'],
+  ['view-table', 'table'], ['view-inv', 'inv']];
 
 for (const [id, view] of VIEWS) {
   $(`#${id}`).addEventListener('click', () => {
@@ -1129,6 +1295,15 @@ $('#tiles').addEventListener('click', (e) => {
 });
 
 $('#main').addEventListener('click', (e) => {
+  if (e.target.closest('#export-csv')) return exporterCsv(visibleMachines());
+
+  const thInv = e.target.closest('th[data-inv]');
+  if (thInv) {
+    const k = Number(thInv.dataset.inv);
+    state.sortInv = { key: k, dir: state.sortInv.key === k ? -state.sortInv.dir : 1 };
+    return render();
+  }
+
   const th = e.target.closest('th[data-sort]');
   if (th) {
     const key = th.dataset.sort;

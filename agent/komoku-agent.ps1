@@ -546,6 +546,23 @@ function Get-InventorySystem {
     return $out
 }
 
+function Get-InventoryMemory {
+    # Win32_OperatingSystem rapporte la memoire VISIBLE, amputee de ce que le
+    # materiel se reserve : 15,4 Go sur une machine qui en a 16. Pour un
+    # inventaire qui sert aux achats, c'est la capacite installee qui compte.
+    $out = [ordered]@{}
+    try {
+        $barrettes = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction Stop)
+        if ($barrettes.Count -gt 0) {
+            $out.installedBytes = [long](($barrettes | Measure-Object -Property Capacity -Sum).Sum)
+            $out.modules = $barrettes.Count
+            $vitesses = @($barrettes | ForEach-Object { $_.Speed } | Where-Object { $_ })
+            if ($vitesses.Count -gt 0) { $out.speedMhz = ($vitesses | Measure-Object -Maximum).Maximum }
+        }
+    } catch {}
+    return $out
+}
+
 function Get-InventoryCpu {
     $out = [ordered]@{}
     try {
@@ -699,6 +716,14 @@ function Get-InventorySecurity {
     return $out
 }
 
+function Merge-Ordered {
+    <# Fusionne deux tables ordonnees ; la seconde complete la premiere. #>
+    param($Base, $Ajout)
+    $h = ConvertTo-Ordered $Base
+    foreach ($p in (ConvertTo-Ordered $Ajout).GetEnumerator()) { $h[$p.Key] = $p.Value }
+    return $h
+}
+
 function ConvertTo-Ordered {
     <#
       L'inventaire arrive soit frais (OrderedDictionary), soit relu du cache
@@ -733,6 +758,7 @@ function Get-Inventory {
     $inv = [ordered]@{
         system        = Get-InventorySystem
         cpu           = Get-InventoryCpu
+        memory        = Get-InventoryMemory
         gpuAdapters   = @(Get-InventoryGpu)
         physicalDisks = @(Get-InventoryPhysicalDisks)
     }
@@ -777,7 +803,7 @@ $payload = [ordered]@{
     collectedAt   = (Get-Date).ToUniversalTime().ToString('o')
     system        = $system
     cpu           = $cpu
-    memory        = $live.memory
+    memory        = (Merge-Ordered $live.memory $inventory.data.memory)
     # Les @() sont indispensables : PowerShell deballe un tableau d'un seul
     # element au retour d'une fonction, et ConvertTo-Json le serialiserait
     # alors comme un objet. Un poste avec un seul disque enverrait un
