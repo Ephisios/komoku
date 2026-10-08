@@ -989,10 +989,21 @@ function kv(pairs) {
     `<dt>${esc(k)}</dt><dd${mono ? ' class="mono"' : ''}>${v}</dd>`).join('')}</dl>`;
 }
 
-function drawerContent(m, detail, changements) {
+function drawerContent(m, detail, changements, diagnostic) {
   const p = detail || {};
   const sec = p.security || {};
   const parts = [];
+
+  // En tête du volet : la synthèse en français passe avant la liste des
+  // anomalies. C'est elle qu'on lit, le reste est la justification.
+  if (diagnostic && !m.health.offline) {
+    const sev = diagnostic.severite;
+    parts.push(`<section class="panel diag" data-sev="${sev}">
+      <div class="diag-tete">${icon(SEV_ICON[sev] || 'info')}<h3>${esc(diagnostic.titre)}</h3></div>
+      <p class="diag-constat">${esc(diagnostic.constat)}</p>
+      ${diagnostic.action ? `<p class="diag-action">${icon('ok')}<span>${esc(diagnostic.action)}</span></p>` : ''}
+    </section>`);
+  }
 
   if (m.health.issues.length) {
     parts.push(panel('Points d\u2019attention', `<div class="issues">${m.health.issues.map((i) => `
@@ -1202,7 +1213,9 @@ async function chargerDetail(id, lastSeen) {
 
   // Un seul détail en mémoire : on ne garde pas le parc entier.
   state.detailCache.clear();
-  state.detailCache.set(cle, { payload: data.payload, changes: data.changes || [] });
+  state.detailCache.set(cle, {
+    payload: data.payload, changes: data.changes || [], diagnostic: data.diagnostic || null,
+  });
   return data.payload;
 }
 
@@ -1241,7 +1254,7 @@ function refreshDrawer({ force = false } = {}) {
     return;
   }
 
-  body.innerHTML = drawerContent(m, detail, entree.changes);
+  body.innerHTML = drawerContent(m, detail, entree.changes, entree.diagnostic);
   body.scrollTop = scroll;
   loadChart();
 }

@@ -43,6 +43,31 @@ vignette, ligne de tableau — ouvre le détail du poste : anomalies, courbes de
 charge sur 6 h / 24 h / 7 j, disques, réseau, sécurité, changements, matériel
 et pression système.
 
+## Diagnostic
+
+Le détail d'un poste s'ouvre sur une phrase en français, pas sur des chiffres :
+
+> **Ce poste manque de mémoire**
+> La machine va chercher sur le disque ce qui devrait tenir en mémoire. La
+> mémoire est occupée à 88 % — c'est le cas 78 % du temps sur les dernières
+> 24 h. Ce n'est pas un programme en particulier : la charge se répartit sur
+> 347 processus.
+> → Ce poste a 16 Go. Passer à 32 Go est la seule réponse durable — fermer
+> des applications ne fera que déplacer le problème.
+
+Deux règles de rédaction : **dire ce qu'il faut faire**, et **dire aussi ce
+que ce n'est pas**. Sans la seconde, on part fermer des applications au
+hasard, ou on conclut à tort qu'il faut changer la machine.
+
+Le verdict s'appuie sur 24 h de mesures, pas sur le relevé de l'instant. Un
+pic isolé de pagination donne « pic de mémoire passager », le même pic sur
+une machine durablement chargée donne « manque de mémoire ». Sans cette
+distinction, l'outil annoncerait une panne pendant une minute pour se
+rétracter la suivante — et cesserait d'être cru.
+
+Le conseil dépend aussi du matériel : une file d'attente disque sur un disque
+mécanique recommande un SSD, la même sur un SSD fait chercher ce qui écrit.
+
 ## Prévision et changements
 
 Deux usages de l'historique, au-delà des courbes.

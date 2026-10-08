@@ -18,6 +18,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { evaluateMachine } = require('./lib/health');
 const { prevoirSaturationDisque } = require('./lib/forecast');
 const { detecterChangements } = require('./lib/changes');
+const { diagnostiquer, calculerTendance } = require('./lib/diagnostic');
 const { normalizePayload } = require('./lib/normalize');
 
 // ------------------------------------------------------------- configuration
@@ -140,6 +141,7 @@ const q = {
   `),
   prune: db.prepare('DELETE FROM samples WHERE ts < ?'),
   diskSeries: db.prepare('SELECT ts, disk FROM samples WHERE machine_id = ? AND ts >= ? ORDER BY ts'),
+  chargeSeries: db.prepare('SELECT ram, cpu FROM samples WHERE machine_id = ? AND ts >= ?'),
   setForecast: db.prepare('UPDATE machines SET forecast = ? WHERE id = ?'),
   touchSeen: db.prepare('UPDATE machines SET last_seen = ? WHERE id = ?'),
   addChange: db.prepare(`INSERT INTO changes (machine_id, ts, cle, libelle, avant, apres, notable)
@@ -341,10 +343,21 @@ function lireRapport(row) {
 /** Rapport complet : servi uniquement par /api/machines/:id. */
 function rowToMachine(row) {
   const { payload, health, forecast } = lireRapport(row);
+
+  // Le diagnostic s'appuie sur 24 h de mesures : une lecture isolée peut
+  // tomber pendant un pic sans conséquence, et conclurait de travers.
+  let diagnostic = null;
+  try {
+    const tendance = calculerTendance(q.chargeSeries.all(row.id, Date.now() - 86400000));
+    diagnostic = diagnostiquer(payload, tendance);
+  } catch (err) {
+    console.error('[komoku] diagnostic impossible pour', row.id, ':', err.message);
+  }
+
   return {
     id: row.id, hostname: row.hostname, label: row.label,
     firstSeen: row.first_seen, lastSeen: row.last_seen,
-    health, forecast, payload,
+    health, forecast, payload, diagnostic,
     // Servi avec le détail : le volet est le seul endroit qui les affiche,
     // et ils ne valent pas un aller-retour de plus.
     changes: q.changes.all(row.id, 40),

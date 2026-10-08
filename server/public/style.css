@@ -853,6 +853,61 @@ td.mono { font-family: var(--mono); font-size: 12px; color: var(--text-secondary
   color: var(--text-secondary);
 }
 
+/* ========================================================== diagnostic */
+
+/* La synthèse en français, en tête du volet. Un liseré coloré porte la
+   gravité, mais le titre et le texte la disent aussi : jamais la couleur
+   seule. */
+.diag { border-left: 3px solid var(--border-strong); }
+.diag[data-sev="ok"] { border-left-color: var(--good); }
+.diag[data-sev="info"] { border-left-color: var(--text-muted); }
+.diag[data-sev="warning"] { border-left-color: var(--warning); }
+.diag[data-sev="critical"] { border-left-color: var(--critical); }
+
+.diag-tete {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.diag-tete svg { width: 17px; height: 17px; flex: none; }
+.diag[data-sev="ok"] .diag-tete svg { color: var(--good); }
+.diag[data-sev="info"] .diag-tete svg { color: var(--text-muted); }
+.diag[data-sev="warning"] .diag-tete svg { color: var(--warning); }
+.diag[data-sev="critical"] .diag-tete svg { color: var(--critical); }
+
+.diag-tete h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -.01em;
+  text-transform: none;
+  color: var(--text-primary);
+}
+
+.diag-constat {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.diag-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 11px 0 0;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.diag-action svg { width: 15px; height: 15px; flex: none; margin-top: 3px; color: var(--accent); }
+
 .kv {
   display: grid;
   grid-template-columns: minmax(130px, auto) 1fr;
