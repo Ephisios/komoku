@@ -804,6 +804,55 @@ function render({ force = false } = {}) {
 /* ========================================================== graphique */
 
 /**
+ * Résumé chiffré de la période affichée.
+ *
+ * Délibérément pas de moyenne : une machine à 50 % la moitié du temps et à
+ * 95 % l'autre moitié a une moyenne de 72 %, qui ne décrit aucun des deux
+ * états et masque exactement le moment où elle souffre.
+ *
+ * La médiane dit l'état normal, la pointe dit jusqu'où ça monte, et la part
+ * du temps au-dessus du seuil dit combien de temps ça fait mal. Les trois
+ * ensemble répondent à « ce poste est-il bien dimensionné ».
+ */
+function statsPeriode(points, cle, seuil) {
+  const vals = points.map((p) => p[cle]).filter((v) => v !== null && v !== undefined).sort((a, b) => a - b);
+  if (vals.length < 3) return null;
+
+  // 95e centile plutôt que le maximum : un maximum est souvent une mesure
+  // isolée sans portée, la pointe doit être un niveau réellement atteint.
+  const centile = (q) => vals[Math.min(vals.length - 1, Math.floor(vals.length * q))];
+  const haut = seuil ? Math.round((vals.filter((v) => v >= seuil).length / vals.length) * 100) : null;
+
+  return { mediane: centile(0.5), pointe: centile(0.95), mesures: vals.length, hautPct: haut };
+}
+
+function rendreStats(points) {
+  const lignes = [
+    ['Processeur', 'cpu', 90, 'var(--series-1)'],
+    ['Mémoire', 'ram', 88, 'var(--series-2)'],
+    ['Carte graphique', 'gpu', null, 'var(--series-3)'],
+  ];
+
+  const cases = lignes.map(([titre, cle, seuil, couleur]) => {
+    const st = statsPeriode(points, cle, seuil);
+    if (!st) return '';
+    const alerte = st.hautPct !== null && st.hautPct >= 25;
+    return `<div class="stat-case">
+      <div class="stat-titre"><i style="background:${couleur}"></i>${esc(titre)}</div>
+      <div class="stat-ligne"><span>habituellement</span><b>${fmtPct(st.mediane)}</b></div>
+      <div class="stat-ligne"><span>pointe</span><b>${fmtPct(st.pointe)}</b></div>
+      ${st.hautPct !== null ? `<div class="stat-ligne${alerte ? ' chaud' : ''}">
+        <span>au-dessus de ${seuil} %</span><b>${st.hautPct} % du temps</b></div>` : ''}
+    </div>`;
+  }).join('');
+
+  return cases
+    ? `<div class="stats-grille">${cases}</div>
+       <p class="meter-sub" style="margin-top:8px">« Habituellement » est la médiane, « pointe » le 95ᵉ centile — pas la moyenne, qui mélangerait les périodes calmes et chargées.</p>`
+    : '';
+}
+
+/**
  * Courbe multi-séries sur un axe unique (tout est en pourcentage).
  * Repères discrets, libellés directs en bout de ligne, croix de visée au survol.
  */
@@ -813,6 +862,9 @@ function drawChart(box, points, opts = {}) {
   const M = { top: 12, right: 52, bottom: 22, left: 32 };
   const iw = Math.max(40, width - M.left - M.right);
   const ih = height - M.top - M.bottom;
+
+  const zoneStats = document.getElementById('chart-stats');
+  if (zoneStats) zoneStats.innerHTML = points.length ? rendreStats(points) : '';
 
   if (!points.length) {
     box.innerHTML = `<p class="meter-sub" style="padding:24px 0;text-align:center">
@@ -1023,7 +1075,8 @@ function drawerContent(m, detail, changements, diagnostic) {
           aria-pressed="${state.historyHours === h}">${h < 24 ? `${h} h` : h === 24 ? '24 h' : '7 j'}</button>`).join('')}
       </div>
     </div>
-    <div class="chart-box" id="chart"></div>`));
+    <div class="chart-box" id="chart"></div>
+    <div id="chart-stats"></div>`));
 
   const vols = p.disk?.volumes || [];
   parts.push(panel('Stockage', `

@@ -853,6 +853,56 @@ td.mono { font-family: var(--mono); font-size: 12px; color: var(--text-secondary
   color: var(--text-secondary);
 }
 
+/* ============================================ statistiques de période */
+
+.stats-grille {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.stat-case {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.stat-titre {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 580;
+  color: var(--text-primary);
+  margin-bottom: 7px;
+}
+
+.stat-titre i { width: 10px; height: 3px; border-radius: 2px; flex: none; }
+
+.stat-ligne {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 1px 0;
+}
+
+.stat-ligne b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+/* Au-delà d'un quart du temps passé au-dessus du seuil, ce n'est plus un
+   pic occasionnel : la valeur se détache. */
+.stat-ligne.chaud b { color: color-mix(in srgb, var(--warning) 72%, var(--text-primary)); }
+
 /* ========================================================== diagnostic */
 
 /* La synthèse en français, en tête du volet. Un liseré coloré porte la

@@ -68,6 +68,15 @@ rétracter la suivante — et cesserait d'être cru.
 Le conseil dépend aussi du matériel : une file d'attente disque sur un disque
 mécanique recommande un SSD, la même sur un SSD fait chercher ce qui écrit.
 
+Sous les courbes, trois chiffres par ressource : **habituellement** (la
+médiane), **pointe** (le 95ᵉ centile) et **la part du temps au-dessus du
+seuil**.
+
+Pas de moyenne, délibérément : une machine à 50 % la moitié du temps et à
+95 % l'autre moitié a une moyenne de 72 %, qui ne décrit aucun des deux états
+et masque exactement le moment où elle souffre. La médiane dit l'état normal,
+la pointe jusqu'où ça monte, la part du temps combien de temps ça fait mal.
+
 ## Prévision et changements
 
 Deux usages de l'historique, au-delà des courbes.
