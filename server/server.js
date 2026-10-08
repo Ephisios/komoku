@@ -16,6 +16,7 @@ const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 
 const { evaluateMachine } = require('./lib/health');
+const { prevoirSaturationDisque } = require('./lib/forecast');
 const { normalizePayload } = require('./lib/normalize');
 
 // ------------------------------------------------------------- configuration
@@ -78,6 +79,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_samples_machine_ts ON samples (machine_id, ts);
 `);
 
+// Migration : la colonne forecast est arrivee apres les premieres bases.
+// CREATE TABLE IF NOT EXISTS ne l'ajoute pas a une table deja creee.
+const colonnes = db.prepare('PRAGMA table_info(machines)').all().map((c) => c.name);
+if (!colonnes.includes('forecast')) {
+  db.exec('ALTER TABLE machines ADD COLUMN forecast TEXT');
+  console.log('[komoku] migration : colonne forecast ajoutee');
+}
+
 const q = {
   upsert: db.prepare(`
     INSERT INTO machines (id, hostname, label, first_seen, last_seen, payload)
@@ -103,7 +112,30 @@ const q = {
     WHERE machine_id = ? AND ts >= ? ORDER BY ts
   `),
   prune: db.prepare('DELETE FROM samples WHERE ts < ?'),
+  diskSeries: db.prepare('SELECT ts, disk FROM samples WHERE machine_id = ? AND ts >= ? ORDER BY ts'),
+  setForecast: db.prepare('UPDATE machines SET forecast = ? WHERE id = ?'),
 };
+
+/**
+ * Recalcule la prevision de saturation d'un poste.
+ *
+ * A la reception d'un rapport, donc au plus une fois toutes les trois minutes
+ * et par poste : une regression sur deux semaines coute quelques millisecondes,
+ * mais la refaire pour tout le parc a chaque rafraichissement du tableau de
+ * bord serait du gaspillage.
+ */
+function recalculerPrevision(machineId, now) {
+  try {
+    const depuis = now - 15 * 86400000;
+    const points = q.diskSeries.all(machineId, depuis);
+    const prevision = prevoirSaturationDisque(points, { now });
+    q.setForecast.run(JSON.stringify(prevision), machineId);
+    return prevision;
+  } catch (err) {
+    console.error('[komoku] prevision impossible pour', machineId, ':', err.message);
+    return null;
+  }
+}
 
 function pruneOldSamples() {
   const cutoff = Date.now() - CONFIG.retentionDays * 86400000;
@@ -262,7 +294,10 @@ function rowToMachine(row, { withPayload = true } = {}) {
   } catch {
     payload = {};
   }
-  const health = evaluateMachine(payload, row.last_seen, CONFIG);
+  let forecast = null;
+  try { if (row.forecast) forecast = JSON.parse(row.forecast); } catch { /* ignore */ }
+
+  const health = evaluateMachine(payload, row.last_seen, CONFIG, { forecast });
   const base = {
     id: row.id,
     hostname: row.hostname,
@@ -270,6 +305,7 @@ function rowToMachine(row, { withPayload = true } = {}) {
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
     health,
+    forecast,
   };
   return withPayload ? { ...base, payload } : base;
 }
@@ -343,6 +379,8 @@ async function handleIngest(req, res) {
     worstDisk,
     payload.vpn?.connected ? 1 : 0
   );
+
+  recalculerPrevision(id, now);
 
   return send(res, 200, { ok: true, receivedAt: now });
 }

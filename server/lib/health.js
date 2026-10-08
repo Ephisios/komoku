@@ -49,7 +49,9 @@ function formatBytes(n) {
  *                           tester la détection d'un poste muet sans attendre
  *                           réellement douze minutes.
  */
-function evaluateMachine(payload, lastSeen, config = {}, now = Date.now()) {
+function evaluateMachine(payload, lastSeen, config = {}, options = {}) {
+  const now = options.now ?? Date.now();
+  const forecast = options.forecast ?? null;
   const issues = [];
   const add = (severity, code, label, detail) => issues.push({ severity, code, label, detail });
 
@@ -77,6 +79,26 @@ function evaluateMachine(payload, lastSeen, config = {}, now = Date.now()) {
         `${formatBytes(free)} libres (${nb(pct)} % utilisés)`);
     }
   }
+  // Prevision de saturation : la seule anomalie qui parle du futur. Elle ne
+  // double pas l'alerte « disque presque plein » — si le disque est deja
+  // critique, ce constat suffit et la prevision n'apporterait rien.
+  const pireDisque = Math.max(0, ...(payload.disk?.volumes || []).map((v) => v.usedPercent ?? 0));
+  if (forecast && forecast.possible && forecast.joursRestants !== null
+      && pireDisque < SEUILS.diskCriticalPercent) {
+    const j = forecast.joursRestants;
+    const quand = j < 1 ? "aujourd'hui"
+      : j < 2 ? 'demain'
+        : `dans ${Math.round(j)} jours`;
+    const detail = `Au rythme actuel (+${nb(forecast.penteParJour)} %/jour), le disque sera plein ${quand}`;
+    if (j <= 7) {
+      add('critical', 'disk-forecast', 'Disque bientôt plein', detail);
+    } else if (j <= 21) {
+      add('warning', 'disk-forecast', 'Disque se remplit vite', detail);
+    } else {
+      add('info', 'disk-forecast', 'Disque à surveiller', detail);
+    }
+  }
+
   for (const d of payload.disk?.physical || []) {
     if (d.healthStatus && !/healthy|sain/i.test(d.healthStatus)) {
       add('critical', 'disk-health', 'Disque physique en défaut',

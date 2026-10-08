@@ -733,6 +733,35 @@ function drawChart(box, points, opts = {}) {
 
 /* ============================================================== volet */
 
+/**
+ * Prévision de saturation du disque.
+ *
+ * Quand le serveur refuse de prévoir, on affiche le motif plutôt que rien :
+ * « pas assez de mesures » et « occupation stable » n'appellent pas la même
+ * réaction, et une case vide laisserait croire à une panne de l'outil.
+ */
+function forecastLine(m) {
+  const f = m.forecast;
+  if (!f) return '';
+
+  if (!f.possible) {
+    return `<p class="meter-sub" style="margin-top:10px">
+      ${icon('clock')} Prévision : ${esc(f.raison || 'indisponible')}
+      ${f.points ? `<span class="dim"> · ${f.points} mesures</span>` : ''}
+    </p>`;
+  }
+
+  const j = f.joursRestants;
+  const sev = j <= 7 ? 'critical' : j <= 21 ? 'warning' : 'info';
+  const quand = j < 1 ? "aujourd'hui" : j < 2 ? 'demain' : `dans ${Math.round(j)} jours`;
+  return `<div class="facts" style="margin-top:10px">
+    <span class="fact" data-sev="${sev}">${icon('clock')}Disque plein ${esc(quand)}</span>
+    <span class="fact">${icon('disk')}+${esc(String(f.penteParJour).replace('.', ','))} %/jour</span>
+    <span class="fact" title="Qualité de l'ajustement : 1 = progression parfaitement régulière">
+      fiabilité ${esc(String(Math.round(f.r2 * 100)))} %</span>
+  </div>`;
+}
+
 function panel(title, inner) {
   return `<section class="panel"><h3>${esc(title)}</h3>${inner}</section>`;
 }
@@ -773,6 +802,7 @@ function drawerContent(m) {
   parts.push(panel('Stockage', `
     <div class="meters">${vols.map((v) => meter('disk', `${v.drive} ${v.label || ''}`.trim(), 'disk',
       v.usedPercent, `${fmtBytes(v.freeBytes)} libres sur ${fmtBytes(v.totalBytes)} · ${v.fileSystem || ''}`)).join('')}</div>
+    ${forecastLine(m)}
     ${(p.disk?.physical || []).length ? `<div class="facts">${p.disk.physical.map((d) => {
       const bad = d.healthStatus && !/healthy|sain/i.test(d.healthStatus);
       return `<span class="fact" ${bad ? 'data-sev="critical"' : ''}>${icon('disk')}${
