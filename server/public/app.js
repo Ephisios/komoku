@@ -989,7 +989,7 @@ function kv(pairs) {
     `<dt>${esc(k)}</dt><dd${mono ? ' class="mono"' : ''}>${v}</dd>`).join('')}</dl>`;
 }
 
-function drawerContent(m, detail) {
+function drawerContent(m, detail, changements) {
   const p = detail || {};
   const sec = p.security || {};
   const parts = [];
@@ -1060,6 +1060,18 @@ function drawerContent(m, detail) {
     ['Redémarrage', p.rebootPending
       ? `<span class="fact" data-sev="warning">${icon('reboot')}en attente</span>` : 'à jour'],
   ])));
+
+  // Juste avant « Matériel et système » : c'est le contexte de ce qui a changé.
+  if (changements && changements.length) {
+    parts.push(panel('Changements', `<div class="issues">${changements.map((c) => `
+      <div class="issue" data-sev="${c.notable ? 'warning' : 'info'}">${icon(c.notable ? 'warn' : 'clock')}
+        <div>
+          <b>${esc(c.libelle)}</b>
+          <span>— ${esc(c.avant)} → ${esc(c.apres)}</span>
+          <span class="dim"> · ${esc(fmtClock(c.ts))}</span>
+        </div>
+      </div>`).join('')}</div>`));
+  }
 
   const gpus = p.gpu?.adapters || [];
   parts.push(panel('Matériel et système', kv([
@@ -1163,7 +1175,7 @@ async function chargerDetail(id, lastSeen) {
 
   // Un seul détail en mémoire : on ne garde pas le parc entier.
   state.detailCache.clear();
-  state.detailCache.set(cle, data.payload);
+  state.detailCache.set(cle, { payload: data.payload, changes: data.changes || [] });
   return data.payload;
 }
 
@@ -1187,7 +1199,8 @@ function refreshDrawer({ force = false } = {}) {
 
   const body = $('#d-body');
   const scroll = body.scrollTop;
-  const detail = state.detailCache.get(`${m.id}:${m.lastSeen}`);
+  const entree = state.detailCache.get(`${m.id}:${m.lastSeen}`);
+  const detail = entree?.payload;
 
   if (!detail) {
     body.innerHTML = '<p class="meter-sub" style="padding:28px 0;text-align:center">Chargement du détail…</p>';
@@ -1201,7 +1214,7 @@ function refreshDrawer({ force = false } = {}) {
     return;
   }
 
-  body.innerHTML = drawerContent(m, detail);
+  body.innerHTML = drawerContent(m, detail, entree.changes);
   body.scrollTop = scroll;
   loadChart();
 }
@@ -1305,7 +1318,7 @@ function buildReport(m, detail) {
 async function copyReport(id, btn) {
   const m = state.machines.find((x) => x.id === id);
   if (!m) return;
-  const text = buildReport(m, state.detailCache.get(`${m.id}:${m.lastSeen}`));
+  const text = buildReport(m, state.detailCache.get(`${m.id}:${m.lastSeen}`)?.payload);
   try {
     await navigator.clipboard.writeText(text);
     const old = btn.innerHTML;

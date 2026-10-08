@@ -17,6 +17,7 @@ fenêtre.
 | **VPN** | connecté ou non, et avec quel client (WireGuard, OpenVPN, NordVPN, Fortinet, AnyConnect, Tailscale… 20 clients reconnus) |
 | **Sécurité** | antivirus actif ou non, signatures à jour, pare-feu, BitLocker, dernier correctif Windows, redémarrage en attente |
 | **Divers** | utilisateur connecté, durée depuis le dernier démarrage, batterie, santé SMART des disques, programmes les plus gourmands |
+| **Changements** | mémoire, disques, processeur, numéro de série, version de Windows : ce qui a changé et quand |
 
 Le tableau de bord classe les postes tout seul : **Problème**, **Attention**,
 **À noter**, **Normal**, **Hors ligne** — avec, pour chacun, la phrase qui
@@ -40,6 +41,24 @@ Le choix est mémorisé dans le navigateur. Un clic n'importe où — ligne, nœ
 vignette, ligne de tableau — ouvre le détail du poste : anomalies, courbes de
 charge sur 6 h / 24 h / 7 j, disques, réseau, sécurité, matériel, programmes
 les plus gourmands.
+
+## Prévision et changements
+
+Deux usages de l'historique, au-delà des courbes.
+
+**Saturation disque** — une régression sur quatorze jours annonce *« C: sera
+plein dans 12 jours »*. La fonction refuse de répondre tant qu'elle n'a pas
+20 mesures, 48 heures d'historique, une pente nette et un ajustement correct,
+et elle affiche alors le motif du refus. Une prévision fausse une fois sur
+trois serait pire qu'aucune prévision.
+
+**Journal des changements** — chaque rapport est comparé au précédent sur ce
+qui ne devrait pas bouger seul. Une barrette de mémoire qui disparaît, un
+disque remplacé, un numéro de série qui change sous la même étiquette : des
+faits qu'on ne remarque jamais sur le moment et qu'on cherche six mois plus
+tard. Les changements notables (mémoire en baisse, matériel remplacé) se
+distinguent des courants (montée de Windows, changement d'utilisateur), et
+sont conservés deux ans — bien plus longtemps que les mesures.
 
 ## Architecture
 

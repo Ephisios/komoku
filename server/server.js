@@ -17,6 +17,7 @@ const { DatabaseSync } = require('node:sqlite');
 
 const { evaluateMachine } = require('./lib/health');
 const { prevoirSaturationDisque } = require('./lib/forecast');
+const { detecterChangements } = require('./lib/changes');
 const { normalizePayload } = require('./lib/normalize');
 
 // ------------------------------------------------------------- configuration
@@ -77,6 +78,21 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_samples_machine_ts ON samples (machine_id, ts);
+
+  -- Journal des changements durables : mémoire, disques, numéro de série,
+  -- version de Windows. Rare par nature, donc conservé bien plus longtemps
+  -- que les mesures — c'est six mois après qu'on le cherche.
+  CREATE TABLE IF NOT EXISTS changes (
+    machine_id TEXT NOT NULL,
+    ts         INTEGER NOT NULL,
+    cle        TEXT NOT NULL,
+    libelle    TEXT NOT NULL,
+    avant      TEXT,
+    apres      TEXT,
+    notable    INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_changes_machine_ts ON changes (machine_id, ts);
 `);
 
 // Migration : la colonne forecast est arrivee apres les premieres bases.
@@ -126,6 +142,12 @@ const q = {
   diskSeries: db.prepare('SELECT ts, disk FROM samples WHERE machine_id = ? AND ts >= ? ORDER BY ts'),
   setForecast: db.prepare('UPDATE machines SET forecast = ? WHERE id = ?'),
   touchSeen: db.prepare('UPDATE machines SET last_seen = ? WHERE id = ?'),
+  addChange: db.prepare(`INSERT INTO changes (machine_id, ts, cle, libelle, avant, apres, notable)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`),
+  changes: db.prepare(`SELECT ts, cle, libelle, avant, apres, notable FROM changes
+    WHERE machine_id = ? ORDER BY ts DESC LIMIT ?`),
+  deleteChanges: db.prepare('DELETE FROM changes WHERE machine_id = ?'),
+  pruneChanges: db.prepare('DELETE FROM changes WHERE ts < ?'),
 };
 
 /**
@@ -154,6 +176,9 @@ function pruneOldSamples() {
   // node:sqlite peut renvoyer un BigInt pour changes
   const changes = Number(q.prune.run(cutoff).changes);
   if (changes > 0) console.log(`[komoku] purge : ${changes} mesures de plus de ${CONFIG.retentionDays} jours`);
+  // Les changements survivent bien plus longtemps que les mesures : ils sont
+  // rares, minuscules, et c'est leur ancienneté qui fait leur valeur.
+  q.pruneChanges.run(Date.now() - 730 * 86400000);
 }
 pruneOldSamples();
 setInterval(pruneOldSamples, 3600000).unref();
@@ -320,6 +345,9 @@ function rowToMachine(row) {
     id: row.id, hostname: row.hostname, label: row.label,
     firstSeen: row.first_seen, lastSeen: row.last_seen,
     health, forecast, payload,
+    // Servi avec le détail : le volet est le seul endroit qui les affiche,
+    // et ils ne valent pas un aller-retour de plus.
+    changes: q.changes.all(row.id, 40),
   };
 }
 
@@ -480,6 +508,18 @@ async function handleIngest(req, res) {
   if (enRetard) {
     q.touchSeen.run(now, id);
   } else {
+    // Comparaison au rapport précédent, et seulement pour un rapport à jour :
+    // un relevé rattrapé décrit un état plus ancien, le comparer à l'état
+    // courant produirait des changements inversés et imaginaires.
+    if (connu) {
+      try {
+        const precedent = normalizePayload(JSON.parse(connu.payload));
+        for (const c of detecterChangements(precedent, payload)) {
+          q.addChange.run(id, now, c.cle, c.libelle, c.avant, c.apres, c.notable ? 1 : 0);
+          console.log(`[komoku] ${hostname} : ${c.libelle} ${c.avant} -> ${c.apres}`);
+        }
+      } catch { /* rapport précédent illisible : rien à comparer */ }
+    }
     q.upsert.run({
       id,
       hostname: hostname.slice(0, 64),
@@ -606,6 +646,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (!isHistory && req.method === 'DELETE') {
         q.deleteSamples.run(id);
+        q.deleteChanges.run(id);
         q.deleteMachine.run(id);
         return send(res, 200, { ok: true });
       }
