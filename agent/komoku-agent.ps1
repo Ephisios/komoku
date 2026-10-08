@@ -825,31 +825,130 @@ if (-not $cfg.serverUrl -or -not $cfg.apiKey) {
 
 $endpoint = ($cfg.serverUrl.TrimEnd('/')) + '/api/ingest'
 $headers = @{ 'X-Api-Key' = $cfg.apiKey }
-$attempt = 0
-$maxAttempts = 3
 
-while ($attempt -lt $maxAttempts) {
-    $attempt++
-    try {
-        $bytes = [Text.Encoding]::UTF8.GetBytes($json)
-        Invoke-RestMethod -Uri $endpoint -Method Post -Body $bytes `
-            -ContentType 'application/json; charset=utf-8' `
-            -Headers $headers -TimeoutSec ([int]$cfg.timeoutSeconds) -ErrorAction Stop | Out-Null
-        Write-Log ("Envoi OK ({0} octets, collecte {1} ms)" -f $json.Length, $payload.collectMs)
-        exit 0
-    } catch {
-        $msg = $_.Exception.Message
-        $status = $null
-        try { $status = [int]$_.Exception.Response.StatusCode } catch {}
-        # Une cle refusee ne sera pas acceptee au reessai
-        if ($status -eq 401 -or $status -eq 403) {
-            Write-Log "Cle API refusee par le serveur (HTTP $status)." 'ERROR'
-            exit 3
-        }
-        Write-Log ("Echec envoi (essai {0}/{1}) : {2}" -f $attempt, $maxAttempts, $msg) 'WARN'
-        if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds (5 * $attempt) }
+# ====================================================== file d'attente
+#
+# Sans file, un serveur injoignable — redemarrage, coupure reseau, portable
+# en veille — faisait perdre le releve : trois essais, puis abandon, et un
+# trou dans l'historique. Ces trous degradent directement la prevision de
+# saturation disque, qui s'appuie sur la regularite des mesures.
+#
+# Les releves non remis sont donc ecrits sur disque, et rejoues au retour du
+# serveur. Le nom du fichier porte l'horodatage de collecte : le tri
+# alphabetique suffit a les rejouer dans l'ordre.
+
+$SpoolDir = Join-Path $StateDir 'spool'
+$SpoolMax = 480        # 24 h a raison d'un releve toutes les 3 min
+$SpoolParPassage = 60  # on ne rejoue pas 480 fichiers d'un coup
+
+function Initialize-Spool {
+    if (-not (Test-Path $SpoolDir)) {
+        New-Item -ItemType Directory -Path $SpoolDir -Force | Out-Null
     }
 }
 
-Write-Log 'Envoi abandonne apres 3 essais.' 'ERROR'
-exit 1
+<#
+  .SYNOPSIS  Envoie un rapport.
+  .OUTPUTS   'ok' | 'refused' | 'failed'
+#>
+function Send-Report {
+    param([string]$Json, [int]$Essais = 3)
+
+    for ($i = 1; $i -le $Essais; $i++) {
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes($Json)
+            Invoke-RestMethod -Uri $endpoint -Method Post -Body $bytes `
+                -ContentType 'application/json; charset=utf-8' `
+                -Headers $headers -TimeoutSec ([int]$cfg.timeoutSeconds) -ErrorAction Stop | Out-Null
+            return 'ok'
+        } catch {
+            $status = $null
+            try { $status = [int]$_.Exception.Response.StatusCode } catch {}
+            # Une cle refusee ne sera jamais acceptee au reessai, et surtout
+            # elle ne doit pas remplir la file de rapports voues a l'echec.
+            if ($status -eq 401 -or $status -eq 403) {
+                Write-Log "Cle API refusee par le serveur (HTTP $status)." 'ERROR'
+                return 'refused'
+            }
+            if ($i -lt $Essais) {
+                Write-Log ("Echec envoi (essai {0}/{1}) : {2}" -f $i, $Essais, $_.Exception.Message) 'WARN'
+                Start-Sleep -Seconds (3 * $i)
+            } else {
+                Write-Log ("Echec envoi apres {0} essais : {1}" -f $Essais, $_.Exception.Message) 'WARN'
+            }
+        }
+    }
+    return 'failed'
+}
+
+function Add-PendingReport {
+    param([string]$Json, [string]$CollectedAt)
+    try {
+        Initialize-Spool
+        # Horodatage trie alphabetiquement : AAAAMMJJ-HHMMSS-mmm
+        $nom = ([datetime]::Parse($CollectedAt).ToUniversalTime().ToString('yyyyMMdd-HHmmss-fff')) + '.json'
+        [IO.File]::WriteAllText((Join-Path $SpoolDir $nom), $Json, (New-Object Text.UTF8Encoding($false)))
+
+        # Eviction des plus anciens : la file est un tampon, pas une archive.
+        $tous = @(Get-ChildItem $SpoolDir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object Name)
+        if ($tous.Count -gt $SpoolMax) {
+            $trop = $tous.Count - $SpoolMax
+            $tous | Select-Object -First $trop | ForEach-Object {
+                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+            }
+            Write-Log ("File pleine : {0} releve(s) le(s) plus ancien(s) abandonne(s)." -f $trop) 'WARN'
+        }
+        Write-Log ("Releve mis en file ({0} en attente)." -f [math]::Min($tous.Count, $SpoolMax))
+    } catch {
+        Write-Log "Mise en file impossible : $($_.Exception.Message)" 'WARN'
+    }
+}
+
+function Send-PendingReports {
+    if (-not (Test-Path $SpoolDir)) { return }
+    $enAttente = @(Get-ChildItem $SpoolDir -Filter '*.json' -ErrorAction SilentlyContinue | Sort-Object Name)
+    if ($enAttente.Count -eq 0) { return }
+
+    Write-Log ("Rattrapage : {0} releve(s) en attente." -f $enAttente.Count)
+    $envoyes = 0
+    foreach ($f in ($enAttente | Select-Object -First $SpoolParPassage)) {
+        $contenu = $null
+        try { $contenu = [IO.File]::ReadAllText($f.FullName) } catch {}
+        if (-not $contenu) {
+            # Fichier illisible ou tronque : on ne le gardera pas indefiniment.
+            Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+            continue
+        }
+        # Un seul essai par releve en attente : si le serveur est de nouveau
+        # indisponible, inutile d'insister sur les suivants.
+        $etat = Send-Report -Json $contenu -Essais 1
+        if ($etat -eq 'ok') {
+            Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+            $envoyes++
+        } else {
+            Write-Log ("Rattrapage interrompu apres {0} releve(s)." -f $envoyes) 'WARN'
+            return
+        }
+    }
+    Write-Log ("Rattrapage termine : {0} releve(s) remis." -f $envoyes)
+}
+
+# ============================================================== envoi
+
+$etat = Send-Report -Json $json
+
+switch ($etat) {
+    'ok' {
+        Write-Log ("Envoi OK ({0} octets, collecte {1} ms)" -f $json.Length, $payload.collectMs)
+        # Le serveur repond : c'est le moment de rejouer ce qui attend.
+        Send-PendingReports
+        exit 0
+    }
+    'refused' {
+        exit 3
+    }
+    default {
+        Add-PendingReport -Json $json -CollectedAt $payload.collectedAt
+        exit 1
+    }
+}

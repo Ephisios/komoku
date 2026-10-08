@@ -81,6 +81,16 @@ db.exec(`
 
 // Migration : la colonne forecast est arrivee apres les premieres bases.
 // CREATE TABLE IF NOT EXISTS ne l'ajoute pas a une table deja creee.
+// Une mesure est identifiée par (poste, instant). L'index unique rend
+// l'ingestion idempotente : si l'agent rejoue un relevé déjà reçu — panne
+// entre l'envoi et la suppression du fichier en file — il ne comptera pas
+// deux fois dans la régression.
+try {
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_samples_unique ON samples (machine_id, ts)');
+} catch (err) {
+  console.warn('[komoku] index unique impossible (doublons préexistants) :', err.message);
+}
+
 const colonnes = db.prepare('PRAGMA table_info(machines)').all().map((c) => c.name);
 if (!colonnes.includes('forecast')) {
   db.exec('ALTER TABLE machines ADD COLUMN forecast TEXT');
@@ -95,11 +105,12 @@ const q = {
       hostname  = excluded.hostname,
       last_seen = excluded.last_seen,
       payload   = excluded.payload,
+      forecast  = machines.forecast,
       -- une étiquette posée depuis le tableau de bord l'emporte sur celle de l'agent
       label     = CASE WHEN machines.label = '' THEN excluded.label ELSE machines.label END
   `),
   addSample: db.prepare(`
-    INSERT INTO samples (machine_id, ts, cpu, ram, gpu, disk, vpn)
+    INSERT OR IGNORE INTO samples (machine_id, ts, cpu, ram, gpu, disk, vpn)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `),
   allMachines: db.prepare('SELECT * FROM machines ORDER BY hostname COLLATE NOCASE'),
@@ -114,6 +125,7 @@ const q = {
   prune: db.prepare('DELETE FROM samples WHERE ts < ?'),
   diskSeries: db.prepare('SELECT ts, disk FROM samples WHERE machine_id = ? AND ts >= ? ORDER BY ts'),
   setForecast: db.prepare('UPDATE machines SET forecast = ? WHERE id = ?'),
+  touchSeen: db.prepare('UPDATE machines SET last_seen = ? WHERE id = ?'),
 };
 
 /**
@@ -359,20 +371,50 @@ async function handleIngest(req, res) {
   if (!hostname) return send(res, 400, { error: 'hostname manquant' });
 
   const now = Date.now();
-  q.upsert.run({
-    id,
-    hostname: hostname.slice(0, 64),
-    label: String(payload.label || '').slice(0, 120),
-    now,
-    payload: JSON.stringify(payload),
-  });
+
+  // Deux horodatages, et c'est volontaire.
+  //
+  //   last_seen  = instant de RÉCEPTION. C'est lui qui décide si un poste est
+  //                hors ligne : un poste qui rattrape trois heures de retard
+  //                n'a pas été joignable pendant ces trois heures.
+  //   sampleTs   = instant de MESURE, déclaré par l'agent. C'est lui qui place
+  //                le point sur la courbe, sinon tous les relevés rattrapés
+  //                s'écraseraient à l'heure du rattrapage.
+  //
+  // L'agent est authentifié, mais une horloge déréglée reste possible : on
+  // borne la valeur déclarée au lieu de la croire sur parole.
+  let sampleTs = now;
+  const declare = Date.parse(payload.collectedAt);
+  if (Number.isFinite(declare)) {
+    const plancher = now - CONFIG.retentionDays * 86400000;
+    const plafond = now + 5 * 60000;   // tolérance de dérive d'horloge
+    if (declare >= plancher && declare <= plafond) sampleTs = declare;
+  }
+
+  // Un relevé plus ancien que le dernier connu complète l'historique sans
+  // remplacer l'état courant : le rattrapage ne doit pas faire reculer le
+  // tableau de bord.
+  const connu = q.oneMachine.get(id);
+  const enRetard = Boolean(connu && sampleTs < connu.last_seen);
+
+  if (enRetard) {
+    q.touchSeen.run(now, id);
+  } else {
+    q.upsert.run({
+      id,
+      hostname: hostname.slice(0, 64),
+      label: String(payload.label || '').slice(0, 120),
+      now,
+      payload: JSON.stringify(payload),
+    });
+  }
 
   // Série temporelle réduite : on ne garde que les quatre courbes utiles.
   const volumes = payload.disk?.volumes || [];
   const worstDisk = volumes.length ? Math.max(...volumes.map((v) => v.usedPercent ?? 0)) : null;
   q.addSample.run(
     id,
-    now,
+    sampleTs,
     payload.cpu?.loadPercent ?? null,
     payload.memory?.usedPercent ?? null,
     payload.gpu?.loadPercent ?? null,
