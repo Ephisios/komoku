@@ -813,6 +813,10 @@ function render({ force = false } = {}) {
  * La médiane dit l'état normal, la pointe dit jusqu'où ça monte, et la part
  * du temps au-dessus du seuil dit combien de temps ça fait mal. Les trois
  * ensemble répondent à « ce poste est-il bien dimensionné ».
+ *
+ * Le dénominateur est le nombre de RELEVÉS, donc le temps où le poste était
+ * allumé. Un portable qui dort ne produit rien, et c'est le bon choix : ce
+ * qui compte est la gêne pendant l'utilisation, pas pendant la nuit.
  */
 function statsPeriode(points, cle, seuil) {
   const vals = points.map((p) => p[cle]).filter((v) => v !== null && v !== undefined).sort((a, b) => a - b);
@@ -842,13 +846,13 @@ function rendreStats(points) {
       <div class="stat-ligne"><span>habituellement</span><b>${fmtPct(st.mediane)}</b></div>
       <div class="stat-ligne"><span>pointe</span><b>${fmtPct(st.pointe)}</b></div>
       ${st.hautPct !== null ? `<div class="stat-ligne${alerte ? ' chaud' : ''}">
-        <span>au-dessus de ${seuil} %</span><b>${st.hautPct} % du temps</b></div>` : ''}
+        <span>au-dessus de ${seuil} %</span><b>${st.hautPct} % du temps allumé</b></div>` : ''}
     </div>`;
   }).join('');
 
   return cases
     ? `<div class="stats-grille">${cases}</div>
-       <p class="meter-sub" style="margin-top:8px">« Habituellement » est la médiane, « pointe » le 95ᵉ centile — pas la moyenne, qui mélangerait les périodes calmes et chargées.</p>`
+       <p class="meter-sub" style="margin-top:8px">« Habituellement » est la médiane, « pointe » le 95ᵉ centile — pas la moyenne, qui mélangerait les périodes calmes et chargées. Les pourcentages portent sur le temps allumé : un poste en veille ne produit aucune mesure.</p>`
     : '';
 }
 

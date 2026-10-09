@@ -56,11 +56,16 @@ function diagnostiquer(payload, tendance = null) {
 
   // L'historique rend le constat beaucoup plus solide : une mesure isolée
   // peut tomber pendant un pic sans conséquence.
+  //
+  // Ces pourcentages portent sur les RELEVÉS, donc sur le temps où le poste
+  // était allumé — un portable en veille ne produit rien. C'est le bon
+  // dénominateur : ce qui compte est la gêne pendant l'utilisation, pas
+  // pendant la nuit.
   const assezDHistorique = tendance && tendance.mesures >= 20;
   const ramSouventHaute = assezDHistorique && tendance.ramHautPct >= SEUILS.presenceHaute;
   const cpuSouventHaut = assezDHistorique && tendance.cpuHautPct >= SEUILS.presenceHaute;
   const depuis = assezDHistorique
-    ? ` — c'est le cas ${pct(tendance.ramHautPct)} du temps sur les dernières 24 h`
+    ? ` — c'est le cas ${pct(tendance.ramHautPct)} du temps allumé sur les dernières 24 h`
     : '';
 
   // ------------------------------------------------- un programme domine
@@ -89,7 +94,7 @@ function diagnostiquer(payload, tendance = null) {
       titre: 'Pic de mémoire passager',
       constat: `La machine a paginé au dernier relevé (${pr.hardFaultsPerSec} défauts par `
         + `seconde), mais sur les dernières 24 h la mémoire ne dépasse ${SEUILS.ramHaute} % `
-        + `que ${pct(tendance.ramHautPct)} du temps.`,
+        + `que ${pct(tendance.ramHautPct)} du temps allumé.`,
       action: 'Rien à faire : un pic passager, sans doute une application qui vient '
         + 'de s’ouvrir. À reconsidérer si cela devient habituel.',
     };
@@ -157,7 +162,7 @@ function diagnostiquer(payload, tendance = null) {
       titre: 'Le processeur travaille beaucoup',
       constat: cpuSouventHaut
         ? `Le processeur dépasse ${SEUILS.cpuHaut} % de charge sur `
-          + `${pct(tendance.cpuHautPct)} du temps des dernières 24 h.`
+          + `${pct(tendance.cpuHautPct)} du temps allumé des dernières 24 h.`
         : `Le processeur est à ${pct(cpu.loadPercent)} au dernier relevé, `
           + 'ce qui peut n\u2019être qu\u2019un pic passager.',
       action: cpuSouventHaut
