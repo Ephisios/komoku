@@ -609,6 +609,13 @@ const server = http.createServer(async (req, res) => {
 
     // Tout le reste appartient au tableau de bord.
     if (!isAuthenticated(req)) {
+      // La feuille de style habille la page de connexion. La refuser
+      // affichait un formulaire nu, en police de secours : le navigateur
+      // la demande avec un Accept: text/css, pas text/html. Elle ne porte
+      // aucune donnee, seulement des couleurs et des marges.
+      if (req.method === 'GET' && route === '/style.css') {
+        return serveStatic(req, res, route);
+      }
       // Une navigation non authentifiée atterrit sur la page de connexion ;
       // un appel d'API reçoit un 401 que le tableau de bord sait interpréter.
       const wantsHtml = (req.headers.accept || '').includes('text/html');
