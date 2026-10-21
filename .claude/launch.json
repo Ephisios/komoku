@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "komoku-serveur",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/scripts/dev.js"],
+      "port": 8099,
+      "url": "http://127.0.0.1:8099"
+    }
+  ]
+}
