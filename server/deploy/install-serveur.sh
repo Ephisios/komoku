@@ -266,7 +266,9 @@ ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# Pas de MemoryDenyWriteExecute : V8 compile le JavaScript a la volee et doit
+# rendre executables des pages qu'il vient d'ecrire. L'option fait echouer Node
+# des l'initialisation, avant meme de lire server.js, sur un ENOMEM trompeur.
 ReadWritePaths=$DATA_DIR
 
 StandardOutput=journal
